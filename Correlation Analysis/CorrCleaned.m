@@ -4,7 +4,8 @@ eeglab;
 
 %% Some constants
 CHANNELS = 32; REF3 = 13; FS = 1000;
-MODE = 'CCA'; % CCA or EEMD-CCA
+MUSCLE_DENOISING_MODE = 'CCA'; % CCA or EEMD-CCA
+CORR_MODE = 'CLEANED'; % CLEANED or RAW
 
 %% Subjects to analyze
 subjects = [3 1 5 6 ...
@@ -16,12 +17,13 @@ subjects = [3,21];
 %% Analyze each subject
 for iSubject = 1:length(subjects)
 ALLEEG=[];
-subjectID = subjects(iSubject)
+subjectID = subjects(iSubject);
 if subjectID < 10
    subjectIDstr = strcat('S0', num2str(subjectID));
 else
    subjectIDstr = strcat('S', num2str(subjectID));
 end
+disp(['Analyzing ', subjectIDstr]);
 
 % Get the path to files
 subjectDataDir = append(strcat('./subjects/', subjectIDstr, '/eeg/*.vhdr'));
@@ -35,7 +37,7 @@ for trial = 1:nTrials
     [ALLEEG EEG CURRENTSET] = ...
         pop_newset(ALLEEG, EEG, 0,'setname',fileName,'gui','off'); 
     
-    % Reset channel locations
+    % Set channel locations
     EEG=pop_chanedit(EEG, 'rplurchanloc',CURRENTSET,'load',...
         {'ChannelLoc1208.ced','filetype','autodetect'});
     [ALLEEG EEG CURRENTSET] = ...
@@ -82,7 +84,7 @@ for trial = 1:nTrials
         end
     end
     
-    % Extract the EEG data between every two triggers 
+    % Slice the EEG data based on triggers 
     for iSegment = 1:size(triggerIndicesNew, 1)
         EEGSegment = pop_select(EEG, 'point', triggerIndicesNew(iSegment, :));
         % Band-pass 1-80 Hz
@@ -111,40 +113,41 @@ end
 EEG = pop_mergeset(ALLEEG,[1:nTrials]);
 [ALLEEG EEG CURRENTSET] = pop_newset(...
     ALLEEG, EEG, 0,'setname','Merged Set','gui','off');
-EEG = eeg_checkset(EEG);
-savePlace = strcat(path);
+EEG = eeg_checkset(EEG); 
 
-%% ICA & ICLabel
-EEG = pop_runica(ALLEEG(end), 'icatype', 'sobi'); %sobi  runica
-[ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
+if strcmp(CORR_MODE, 'CLEANED')
+    %% ICA & ICLabel
+    EEG = pop_runica(ALLEEG(end), 'icatype', 'sobi'); %sobi  runica
+    [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
 
-EEG = eeg_checkset(EEG); EEG = pop_iclabel(EEG, 'default');
-[ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
+    EEG = eeg_checkset(EEG); EEG = pop_iclabel(EEG, 'default');
+    [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
 
-cut = 0.5;
-EEG = pop_icflag(EEG,[NaN NaN;cut 1;cut 1; cut 1;cut 1;cut 1;NaN NaN]);
-[ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
-EEG = eeg_checkset(EEG);
+    cut = 0.5;
+    EEG = pop_icflag(EEG,[NaN NaN;cut 1;cut 1; cut 1;cut 1;cut 1;NaN NaN]);
+    [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
+    EEG = eeg_checkset(EEG);
 
-EEG = pop_subcomp(EEG,'',0,0); 
-[ALLEEG EEG CURRENTSET] = ...
-pop_newset(ALLEEG, EEG, CURRENTSET,'overwrite','on','gui','off');
+    EEG = pop_subcomp(EEG,'',0,0); 
+    [ALLEEG EEG CURRENTSET] = ...
+    pop_newset(ALLEEG, EEG, CURRENTSET,'overwrite','on','gui','off');
 
-%% Muscular denoising
-if strcmp(MODE,'EEMD-CCA')
-    % EEMD-CCA
-    numIMFs = 10; 
-    [eemdEEG] = EEMD_CCA(EEG.data, numIMFs, FS);
-    EEG.data = eemdEEG; % Downsampled to 500 Hz after this step
-elseif strcmp(MODE,'CCA')
-    % CCA
-    eegData = double(EEG.data); gems = mean(eegData,2); % zero mean
-    eegData = eegData-gems*ones(1,size(eegData,2)); 
-    [y,w,r] = ccaqr(eegData,1);
-    A = pinv(w'); nCCA=18; %<=27
-    A(:,end-nCCA+1:end) = 0; B = A*y;
-    ccaEEG = [B B(:,end-1+1:end)]+gems*ones(1,size(eegData,2));    
-    EEG.data = ccaEEG;
+    %% Muscular denoising
+    if strcmp(MUSCLE_DENOISING_MODE,'EEMD-CCA')
+        % EEMD-CCA
+        numIMFs = 10; 
+        [eemdEEG] = EEMD_CCA(EEG.data, numIMFs, FS);
+        EEG.data = eemdEEG; % Downsampled to 500 Hz after this step
+    elseif strcmp(MUSCLE_DENOISING_MODE,'CCA')
+        % CCA
+        eegData = double(EEG.data); gems = mean(eegData,2); % zero mean
+        eegData = eegData-gems*ones(1,size(eegData,2)); 
+        [y,w,r] = ccaqr(eegData,1);
+        A = pinv(w'); nCCA=18; %<=27
+        A(:,end-nCCA+1:end) = 0; B = A*y;
+        ccaEEG = [B B(:,end-1+1:end)]+gems*ones(1,size(eegData,2));    
+        EEG.data = ccaEEG;
+    end
 end
 
 %% Correlation analysis
@@ -202,5 +205,7 @@ exportgraphics(gcf,strcat(['./corr/clean/pre/', ...
                            subjectIDstr,'_cca8.png']));
 close all;
 end
+
+disp(['Correlation Analysis Completed']);
 
 
