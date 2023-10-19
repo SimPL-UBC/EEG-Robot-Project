@@ -93,7 +93,7 @@ for trial = 1:nTrials
         eegData = double(EEGSegment.data);
         
         % Notch filter at 60 Hz
-        eegData = notchfilter(eegData, 1000); 
+        eegData = notch_filter(eegData, 1000); 
         EEGSegment.data = eegData;
         
         if iSegment == 1
