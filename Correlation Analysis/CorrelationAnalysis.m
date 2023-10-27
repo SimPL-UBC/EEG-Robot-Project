@@ -1,18 +1,17 @@
 clear; clc; close all;
 addpath('C:\Users\calvi\Documents\EEG_adaptation\eeglab_current\eeglab2023.0');
-eeglab;
+[ALLEEG EEG CURRENTSET ALLCOM] = eeglab;
 
 %% Some constants
 CHANNELS = 32; REF3 = 13; FS = 1000;
-MUSCLE_DENOISING_MODE = 'CCA'; % CCA or EEMD-CCA
+MUSCLE_DENOISING_MODE = 'EEMD-CCA'; % CCA or EEMD-CCA
 CORR_MODE = 'CLEANED'; % CLEANED or RAW
 
 %% Subjects to analyze
-subjects = [3 1 5 6 ...
-            7 9 10 11 13 ...
+subjects = [1 3 5 6 7 ...
+            9 10 11 13 ...
             15 16 17 18 19 ... 
             21 22 23 24 25]; 
-subjects = [3,21];
 
 %% Analyze each subject
 for iSubject = 1:length(subjects)
@@ -25,99 +24,29 @@ else
 end
 disp(['Analyzing ', subjectIDstr]);
 
-% Get the path to files
+%% Get the path to files
 subjectDataDir = append(strcat('./subjects/', subjectIDstr, '/eeg/*.vhdr'));
 nameList = dir(subjectDataDir); nTrials = length(nameList);
 path = strcat('./subjects/', subjectIDstr, '/eeg/'); 
 
-for trial = 1:nTrials 
-    % Load the EEG file
-    fileName = nameList(trial).name
-    EEG = pop_loadbv(path, fileName, [], []);
-    [ALLEEG EEG CURRENTSET] = ...
-        pop_newset(ALLEEG, EEG, 0,'setname',fileName,'gui','off'); 
-    
-    % Set channel locations
-    EEG=pop_chanedit(EEG, 'rplurchanloc',CURRENTSET,'load',...
-        {'ChannelLoc1208.ced','filetype','autodetect'});
-    [ALLEEG EEG CURRENTSET] = ...
-    pop_newset(ALLEEG, EEG, CURRENTSET,'overwrite','on','gui','off');
-    
-    % Re-reference
-    ref = EEG.data(REF3, :);
-    for channel = 1:CHANNELS
-        EEG.data(channel, :) = EEG.data(channel, :) - ref;
-    end
-    [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
-    clear ref
-    
-    % Remove motion-artifact channels
-    EEG = pop_select( EEG, 'rmchannel',{'TP9'});
-    EEG = pop_select( EEG, 'rmchannel',{'TP10'});
-    EEG = pop_select( EEG, 'rmchannel',{'SPL'});
-    EEG = pop_select( EEG, 'rmchannel',{'SPR'});
-    EEG = pop_select( EEG, 'rmchannel',{'FP1'});
-    EEG = pop_select( EEG, 'rmchannel',{'FP2'});
-    [ALLEEG EEG CURRENTSET] = ...
-    pop_newset(ALLEEG, EEG, CURRENTSET,'overwrite','on','gui','off');
-    
-    % Extract triggers
-    info = ALLEEG(CURRENTSET).event;
-    info = struct2table(info);
-    triggerIndicesRaw = info.latency;
-    type = info.type; trig = [];
-    for i = 1:length(type)
-        if strcmp(type{i}, 'M  1')
-           trig = [trig triggerIndicesRaw(i)]; 
-        end
-    end
-    triggerIndicesRaw = trig';
-    triggerIndicesNew = zeros(length(triggerIndicesRaw)/2, 2);
-    for iTrigger = 1:length(triggerIndicesRaw)
-        if mod(iTrigger,2)==1
-            iRow = ceil(iTrigger/2);
-            triggerIndicesNew(iRow,1) = triggerIndicesRaw(iTrigger);
-        end
-        if mod(iTrigger,2)==0
-            iRow = iTrigger/2;
-            triggerIndicesNew(iRow,2) = triggerIndicesRaw(iTrigger);
-        end
-    end
-    
-    % Slice the EEG data based on triggers 
-    for iSegment = 1:size(triggerIndicesNew, 1)
-        EEGSegment = pop_select(EEG, 'point', triggerIndicesNew(iSegment, :));
-        % Band-pass 1-80 Hz
-        EEGSegment = pop_eegfiltnew(EEGSegment,'locutoff',1,...
-                          'hicutoff',80);
-        eegData = double(EEGSegment.data);
-        
-        % Notch filter at 60 Hz
-        eegData = notch_filter(eegData, 1000); 
-        EEGSegment.data = eegData;
-        
-        if iSegment == 1
-            OUTEEG = EEGSegment;
-        end
-        if iSegment > 1
-            OUTEEG = pop_mergeset(OUTEEG, EEGSegment);
-        end
-        length(OUTEEG.times)
-    end
-    CURRENTSET
-    [ALLEEG EEG CURRENTSET] = ...
-        pop_newset(ALLEEG, OUTEEG, CURRENTSET,'overwrite','on','gui','off'); 
-end
+%% Load the EEG file
+EEG = pop_loadset('filename','ALL_raw.set','filepath', path);
+[ALLEEG, EEG, CURRENTSET] = eeg_store(ALLEEG, EEG, 0);
 
-%% Merge files
-EEG = pop_mergeset(ALLEEG,[1:nTrials]);
-[ALLEEG EEG CURRENTSET] = pop_newset(...
-    ALLEEG, EEG, 0,'setname','Merged Set','gui','off');
-EEG = eeg_checkset(EEG); 
-
+%% Remove motion-artifact contaminated channels
+EEG = pop_select( EEG, 'rmchannel',{'TP9'});
+EEG = pop_select( EEG, 'rmchannel',{'TP10'});
+EEG = pop_select( EEG, 'rmchannel',{'SPL'});
+EEG = pop_select( EEG, 'rmchannel',{'SPR'});
+EEG = pop_select( EEG, 'rmchannel',{'FP1'});
+EEG = pop_select( EEG, 'rmchannel',{'FP2'});
+[ALLEEG EEG CURRENTSET] = ...
+pop_newset(ALLEEG, EEG, CURRENTSET,'overwrite','on','gui','off');
+   
+%% Cleaning
 if strcmp(CORR_MODE, 'CLEANED')
     %% ICA & ICLabel
-    EEG = pop_runica(ALLEEG(end), 'icatype', 'sobi'); %sobi  runica
+    EEG = pop_runica(EEG, 'icatype', 'sobi'); %sobi  runica
     [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
 
     EEG = eeg_checkset(EEG); EEG = pop_iclabel(EEG, 'default');
@@ -137,16 +66,27 @@ if strcmp(CORR_MODE, 'CLEANED')
         % EEMD-CCA
         numIMFs = 10; 
         [eemdEEG] = EEMD_CCA(EEG.data, numIMFs, FS);
-        EEG.data = eemdEEG; % Downsampled to 500 Hz after this step
+        new = [];
+        for c = 1:26
+            temp = eemdEEG(c,:);
+            temp = upsample(temp, 10);
+            new = [new; temp];
+        end
+        EEG.data = eemdEEG;
+        [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
     elseif strcmp(MUSCLE_DENOISING_MODE,'CCA')
         % CCA
-        eegData = double(EEG.data); gems = mean(eegData,2); % zero mean
+        eegData = double(EEG.data); 
+        eegData = (resample(eegData.', 1, 10)).';
+        gems = mean(eegData,2); % zero mean
         eegData = eegData-gems*ones(1,size(eegData,2)); 
         [y,w,r] = ccaqr(eegData,1);
-        A = pinv(w'); nCCA=18; %<=27
+        A = pinv(w'); nCCA = 18;
         A(:,end-nCCA+1:end) = 0; B = A*y;
         ccaEEG = [B B(:,end-1+1:end)]+gems*ones(1,size(eegData,2));    
         EEG.data = ccaEEG;
+        FS = 100;
+        [ALLEEG EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
     end
 end
 
@@ -160,50 +100,102 @@ rearranged = [7,14,18, ...
               4,24, ...
               1,2,3,25,26, ...
               6,23];
-% rearranged = [4,25, ...
-%               8,15,19, ...
-%               10,14,16, ...
-%               12,13,17,18, ...
-%               9,20,21, ...
-%               6,22,23, ...
-%               5,26, ...
-%               1,2,3,27,28];
+eegData = EEG.data;
+ts = 1/FS:1/FS:length(eegData(1,:))/FS;
 
-eegData = double(EEG.data);
-ts = 1/500:1/500:length(eegData(1,:))/500;
+% Extract channels from the raw data
+rawALLEEG = load(strcat([path, 'ALLEEG_raw.mat']));
+rawEEGData = double(rawALLEEG.ALLEEG(end).data);
+SPL = rawEEGData(5, :); SPR = rawEEGData(27, :);
+
+% Combine and save
+eegData =[SPL; SPR; eegData];
 
 % Adaptation
 indices = logical((ts>=240).*(ts<=1440));
 eegCorr = [];
-for i = 1:(CHANNELS-6)
+for i = 1:(CHANNELS-4)
    temp = eegData(i,:);
    eegCorr = [eegCorr; temp(indices)];
 end
 
-cor = corr(eegCorr'); 
-corInterest = cor(rearranged,rearranged);
-tbl = array2table(corInterest);
 info = EEG.chanlocs;
 info = struct2table(info);
 lblInterest = info.labels(rearranged);
+lblInterest = [ {'SPL'}; {'SPR'}; lblInterest];
 xValues = lblInterest; yValues = lblInterest;
+rearranged = rearranged + 2;
+rearranged = [1 2 rearranged];
+
+cor = corr(eegCorr'); 
+corInterest = cor(rearranged,rearranged);
+
+figure;
 h = heatmap(xValues,yValues,abs(corInterest));
 exportgraphics(gcf,strcat(['./corr/clean/adapt/', ...
-                            subjectIDstr,'_cca8.png']));
+                           subjectIDstr,'_', ...
+                           MUSCLE_DENOISING_MODE, ...
+                           '.png']));
 close all;
 
 % Pre-quiet standing
 indices = ts<=4; eegCorr = [];
-for i = 1:(CHANNELS-6)
+for i = 1:(CHANNELS-4)
    temp = eegData(i,:);
    eegCorr = [eegCorr; temp(indices)];
 end
 cor = corr(eegCorr'); 
 corInterest = cor(rearranged,rearranged);
+figure;
 h = heatmap(xValues,yValues,abs(corInterest));
 exportgraphics(gcf,strcat(['./corr/clean/pre/', ...
-                           subjectIDstr,'_cca8.png']));
+                           subjectIDstr,'_', ...
+                           MUSCLE_DENOISING_MODE, ...
+                           '.png']));
 close all;
+
+%% Power spectrum of cerebellar channels
+CBZcleaned = eegData(4,:); 
+CBLcleaned = eegData(3,:);
+CBRcleaned = eegData(5,:);
+CBLraw = rawEEGData(10,:); 
+CBZraw = rawEEGData(17,:);
+CBRraw = rawEEGData(21,:); 
+
+figure('Position',[50,50,1840,280]);
+hold on; plot(CBZraw); plot(CBZcleaned); 
+xlim([120000,130000]); legend('Raw', 'Cleaned')
+exportgraphics(gcf,strcat(['./corr/clean/time/', ...
+                           subjectIDstr,'_', ...
+                           MUSCLE_DENOISING_MODE, ...
+                           '.png']));
+close all;
+
+figure; hold on;  
+[p,f] = pspectrum(CBZraw,FS); plot(f,p);
+[p,f] = pspectrum(CBZcleaned,FS); plot(f,p);
+[p,f] = pspectrum(CBLraw,FS); plot(f,p);
+[p,f] = pspectrum(CBLcleaned,FS); plot(f,p);
+[p,f] = pspectrum(CBRraw,FS); plot(f,p);
+[p,f] = pspectrum(CBRcleaned,FS); plot(f,p);
+[p,f] = pspectrum(SPL,1000); plot(f,p); 
+[p,f] = pspectrum(SPR,1000); plot(f,p);
+xlim([1,80]); %ylim([0,80]);
+xlabel('Hz'); grid on; legend('Raw CBZ', 'Cleaned CBZ', ...
+                              'Raw CBL', 'Cleaned CBL', ...
+                              'Raw CBR', 'Cleaned CBR', ...
+                              'SPL', 'SPR');
+hold off;
+exportgraphics(gcf,strcat(['./corr/clean/psd/', ...
+                           subjectIDstr,'_', ...
+                           MUSCLE_DENOISING_MODE, ...
+                           '.png']));
+close all;
+
+clear SPL SPR CBZcleaned CBZraw ALLEEG ALLCOM
+clear eegData eegStruct eemdEEG h rawEEGData
+clear temp ts p f eegCorr
+
 end
 
 disp(['Correlation Analysis Completed']);
